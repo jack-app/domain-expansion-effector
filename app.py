@@ -54,6 +54,7 @@ def main():
 
     # カメラ準備 ###############################################################
     cap = cv.VideoCapture(cap_device)
+    cap.set(cv.CAP_PROP_FOURCC, cv.VideoWriter_fourcc('M', 'J', 'P', 'G'))
     cap.set(cv.CAP_PROP_FRAME_WIDTH, cap_width)
     cap.set(cv.CAP_PROP_FRAME_HEIGHT, cap_height)
 
