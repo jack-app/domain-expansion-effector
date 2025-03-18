@@ -44,21 +44,22 @@ def get_args():
     return args
 
 # 音声認識の状態
-hotword_detected = False
-hotword_confidence = 0.0
+# hotword_detected = False
+# hotword_confidence = 0.0
 
 # 音声認識を行うスレッド関数
 def audio_recognition_thread():
-    global hotword_detected, hotword_confidence
+    # global hotword_detected
+    # ,hotword_confidence
     
     base_model = First_Iteration_Siamese()
 
-    # ホットワード検出器の初期化 - 閾値0.7
+    # ホットワード検出器の初期化 - 閾値0.8
     ryouikitennkai_hw = HotwordDetector(
         hotword="領域展開",
         model=base_model,
         reference_file="領域展開_ref.json",
-        threshold=0.7,  
+        threshold=0.8,  
         relaxation_time=0.8
     )
 
@@ -99,14 +100,12 @@ def audio_recognition_thread():
                 continue
             if result["match"]:
                 print(f"領域展開を検出！ 信頼度: {result['confidence']:.4f}")
-                hotword_detected = True
-                hotword_confidence = result['confidence']
+                # hotword_detected = True
+                # hotword_confidence = result['confidence']
                 # 検出後、少し待機して状態をリセット
                 time.sleep(2)
-                hotword_detected = False
+                # hotword_detected = False
                 
-    except KeyboardInterrupt:
-        mic_stream.stop_stream()
     except Exception as e:
         print(f"エラーが発生しました: {e}")
     finally:
