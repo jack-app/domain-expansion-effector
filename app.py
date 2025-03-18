@@ -4,6 +4,8 @@ import csv
 import copy
 import argparse
 import itertools
+import threading
+import time
 from collections import Counter
 from collections import deque
 
@@ -14,6 +16,10 @@ import mediapipe as mp
 from utils import CvFpsCalc
 from model import KeyPointClassifier
 from model import PointHistoryClassifier
+
+from eff_word_net.streams import SimpleMicStream
+from eff_word_net.engine import HotwordDetector
+from eff_word_net.audio_processing import First_Iteration_Siamese
 
 
 def get_args():
@@ -37,6 +43,74 @@ def get_args():
 
     return args
 
+# 音声認識の状態
+hotword_detected = False
+hotword_confidence = 0.0
+
+# 音声認識を行うスレッド関数
+def audio_recognition_thread():
+    global hotword_detected, hotword_confidence
+    
+    base_model = First_Iteration_Siamese()
+
+    # ホットワード検出器の初期化 - 閾値0.7
+    ryouikitennkai_hw = HotwordDetector(
+        hotword="領域展開",
+        model=base_model,
+        reference_file="領域展開_ref.json",
+        threshold=0.7,  
+        relaxation_time=0.8
+    )
+
+    # モデルが期待するフレームサイズを確認
+    expected_frames = ryouikitennkai_hw.model.window_frames
+
+    # マイクストリームの初期化
+    sample_rate = 16000  # デフォルトのサンプリングレート
+    window_length_secs = expected_frames / sample_rate  # 適切な時間窓の計算
+
+    mic_stream = SimpleMicStream(
+        window_length_secs=window_length_secs,
+        sliding_window_secs=window_length_secs / 2, 
+    )
+
+    mic_stream.start_stream()
+
+    print("「領域展開」と言ってください")
+    try:
+        while True:
+            frame = mic_stream.getFrame()
+            
+            # フレームサイズの調整が必要か確認
+            if frame.shape[0] != expected_frames:
+                if frame.shape[0] > expected_frames:
+                    # 切り取り
+                    frame = frame[:expected_frames]
+                else:
+                    # パディング
+                    padded_frame = np.zeros(expected_frames)
+                    padded_frame[:frame.shape[0]] = frame
+                    frame = padded_frame
+            
+            # スコアリング
+            result = ryouikitennkai_hw.scoreFrame(frame)
+            if result is None:
+                # 音声活動なし
+                continue
+            if result["match"]:
+                print(f"領域展開を検出！ 信頼度: {result['confidence']:.4f}")
+                hotword_detected = True
+                hotword_confidence = result['confidence']
+                # 検出後、少し待機して状態をリセット
+                time.sleep(2)
+                hotword_detected = False
+                
+    except KeyboardInterrupt:
+        mic_stream.stop_stream()
+    except Exception as e:
+        print(f"エラーが発生しました: {e}")
+    finally:
+        mic_stream.stop_stream()
 
 def main():
     # 引数解析 #################################################################
@@ -95,6 +169,10 @@ def main():
 
     # フィンガージェスチャー履歴 ################################################
     finger_gesture_history = deque(maxlen=history_length)
+
+    # 音声認識スレッドを開始 ###################################################
+    audio_thread = threading.Thread(target=audio_recognition_thread, daemon=True)
+    audio_thread.start()
 
     #  ########################################################################
     mode = 0
@@ -175,8 +253,16 @@ def main():
         debug_image = draw_point_history(debug_image, point_history)
         debug_image = draw_info(debug_image, fps, mode, number)
 
+         # ホットワード検出情報の表示
+        if hotword_detected:
+            cv.rectangle(debug_image, (0, 120), (300, 160), (0, 0, 0), -1)
+            cv.putText(debug_image, "領域展開を検出！", (10, 150), 
+                      cv.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2, cv.LINE_AA)
+
         # 画面反映 #############################################################
         cv.imshow('Hand Gesture Recognition', debug_image)
+
+        
 
     cap.release()
     cv.destroyAllWindows()
