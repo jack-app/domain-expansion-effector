@@ -253,12 +253,7 @@ def main():
         debug_image = draw_point_history(debug_image, point_history)
         debug_image = draw_info(debug_image, fps, mode, number)
 
-         # ホットワード検出情報の表示
-        if hotword_detected:
-            cv.rectangle(debug_image, (0, 120), (300, 160), (0, 0, 0), -1)
-            cv.putText(debug_image, "領域展開を検出！", (10, 150), 
-                      cv.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2, cv.LINE_AA)
-
+        
         # 画面反映 #############################################################
         cv.imshow('Hand Gesture Recognition', debug_image)
 
