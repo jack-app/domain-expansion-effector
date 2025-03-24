@@ -59,7 +59,7 @@ def audio_recognition_thread():
         hotword="領域展開",
         model=base_model,
         reference_file="領域展開_ref.json",
-        threshold=0.8,  
+        threshold=0.9,  
         relaxation_time=0.8
     )
 
