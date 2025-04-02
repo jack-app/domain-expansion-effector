@@ -4,6 +4,8 @@ import csv
 import copy
 import argparse
 import itertools
+import threading
+import time
 from collections import Counter
 from collections import deque
 
@@ -14,6 +16,10 @@ import mediapipe as mp
 from utils import CvFpsCalc
 from model import KeyPointClassifier
 from model import PointHistoryClassifier
+
+from eff_word_net.streams import SimpleMicStream
+from eff_word_net.engine import HotwordDetector
+from eff_word_net.audio_processing import First_Iteration_Siamese
 
 
 def get_args():
@@ -37,6 +43,70 @@ def get_args():
 
     return args
 
+# 音声認識の状態
+hotword_detected = False
+hotword_confidence = 0.0
+ #アニメーション表示のフラグ ################################################
+show_animation = False
+
+# 音声認識を行うスレッド関数
+def audio_recognition_thread():
+    global hotword_detected,hotword_confidence
+    
+    base_model = First_Iteration_Siamese()
+
+    # ホットワード検出器の初期化 - 閾値0.8
+    ryouikitennkai_hw = HotwordDetector(
+        hotword="領域展開",
+        model=base_model,
+        reference_file="領域展開_ref.json",
+        threshold=0.9,  
+        relaxation_time=0.8
+    )
+
+    # モデルが期待するフレームサイズを確認
+    expected_frames = ryouikitennkai_hw.model.window_frames
+
+    # マイクストリームの初期化
+    sample_rate = 16000  # デフォルトのサンプリングレート
+    window_length_secs = expected_frames / sample_rate  # 適切な時間窓の計算
+
+    mic_stream = SimpleMicStream(
+        window_length_secs=window_length_secs,
+        sliding_window_secs=window_length_secs / 2, 
+    )
+
+    mic_stream.start_stream()
+
+    print("「領域展開」と言ってください")
+    try:
+        while True:
+            frame = mic_stream.getFrame()
+            
+            # フレームサイズの調整が必要か確認
+            if frame.shape[0] != expected_frames:
+                if frame.shape[0] > expected_frames:
+                    # 切り取り
+                    frame = frame[:expected_frames]
+                else:
+                    # パディング
+                    padded_frame = np.zeros(expected_frames)
+                    padded_frame[:frame.shape[0]] = frame
+                    frame = padded_frame
+            
+            # スコアリング
+            result = ryouikitennkai_hw.scoreFrame(frame)
+            if result is None:
+                # 音声活動なし
+                continue
+            if result["match"]:
+                print(f"領域展開！ 信頼度: {result['confidence']:.4f}")
+                hotword_detected = True
+                hotword_confidence = result['confidence']
+                
+                
+    finally:
+        mic_stream.stop_stream()
 
 def main():
     # 引数解析 #################################################################
@@ -58,6 +128,8 @@ def main():
     cap.set(cv.CAP_PROP_FRAME_WIDTH, cap_width)
     cap.set(cv.CAP_PROP_FRAME_HEIGHT, cap_height)
 
+    # アニメーションビデオの準備 ###############################################
+    animation_video = cv.VideoCapture('Particle_Run-in-space.mp4')
     # モデルロード #############################################################
     mp_hands = mp.solutions.hands
     hands = mp_hands.Hands(
@@ -67,8 +139,9 @@ def main():
         min_tracking_confidence=min_tracking_confidence,
     )
 
+    mp_selfie_segmentation = mp.solutions.selfie_segmentation
+    selfie_segmentation = mp_selfie_segmentation.SelfieSegmentation(model_selection=1)
     keypoint_classifier = KeyPointClassifier()
-
     point_history_classifier = PointHistoryClassifier()
 
     # ラベル読み込み ###########################################################
@@ -96,17 +169,21 @@ def main():
     # フィンガージェスチャー履歴 ################################################
     finger_gesture_history = deque(maxlen=history_length)
 
-    #  ########################################################################
-    mode = 0
+    # 音声認識スレッドを開始 ###################################################
+    audio_thread = threading.Thread(target=audio_recognition_thread, daemon=True)
+    audio_thread.start()
+    # # アニメーション表示のフラグ ################################################
+    # show_animation = False
+    
 
     while True:
         fps = cvFpsCalc.get()
-
+        global hotword_detected,show_animation
         # キー処理(ESC：終了) #################################################
         key = cv.waitKey(10)
         if key == 27:  # ESC
             break
-        number, mode = select_mode(key, mode)
+        number, mode = select_mode(key, mode=0)
 
         # カメラキャプチャ #####################################################
         ret, image = cap.read()
@@ -115,13 +192,47 @@ def main():
         image = cv.flip(image, 1)  # ミラー表示
         debug_image = copy.deepcopy(image)
 
-        # 検出実施 #############################################################
-        image = cv.cvtColor(image, cv.COLOR_BGR2RGB)
+        # ホットワードが検出された場合、アニメーション表示を切り替え ###############
+        if hotword_detected:
+            show_animation = True
+            print(f"アニメーション表示: {'ON' if show_animation else 'OFF'}")
+            hotword_detected = False
 
-        image.flags.writeable = False
-        results = hands.process(image)
-        image.flags.writeable = True
 
+        # 手のランドマーク検出 ##################################################
+        image_rgb = cv.cvtColor(image, cv.COLOR_BGR2RGB)
+        results = hands.process(image_rgb)
+
+        # セグメンテーション処理 ###############################################
+        seg_results = selfie_segmentation.process(image_rgb)
+        segmentation_mask = seg_results.segmentation_mask
+        condition = segmentation_mask > 0.1
+        # 出力画像の準備 #######################################################
+        if show_animation:
+            # アニメーションフレームの取得
+            ret_anim, anim_frame = animation_video.read()
+            if not ret_anim:
+                # ビデオの最後まで再生したら最初に戻る
+                animation_video.set(cv.CAP_PROP_POS_FRAMES, 0)
+                ret_anim, anim_frame = animation_video.read()
+                
+            # アニメーションフレームをリサイズ
+            anim_frame = cv.resize(anim_frame, (image.shape[1], image.shape[0]))
+            
+            # 人物とアニメーションを合成
+            frame_with_alpha = cv.cvtColor(image, cv.COLOR_BGR2BGRA)
+            anim_frame_with_alpha = cv.cvtColor(anim_frame, cv.COLOR_BGR2BGRA)
+            
+            # アルファチャンネルに透明度を設定
+            frame_with_alpha[:, :, 3] = np.where(condition, 255, 0)
+            
+            # 合成
+            output_image = np.where(condition[:, :, np.newaxis], frame_with_alpha, anim_frame_with_alpha)
+            
+            # 4チャンネルから3チャンネルに変換（表示用）
+            output_image = cv.cvtColor(output_image, cv.COLOR_BGRA2BGR)
+        else:
+            output_image = debug_image
         #  ####################################################################
         if results.multi_hand_landmarks is not None:
             for hand_landmarks, handedness in zip(results.multi_hand_landmarks,
@@ -172,11 +283,17 @@ def main():
         else:
             point_history.append([0, 0])
 
-        debug_image = draw_point_history(debug_image, point_history)
-        debug_image = draw_info(debug_image, fps, mode, number)
-
+        # 描画 #################################################################
+        output_image = draw_point_history(output_image, point_history)
+        output_image = draw_info(output_image, fps, mode, number)
+        
+        
         # 画面反映 #############################################################
-        cv.imshow('Hand Gesture Recognition', debug_image)
+        cv.imshow('Hand Gesture Or Voice Recognition', output_image)
+
+
+
+        
 
     cap.release()
     cv.destroyAllWindows()
