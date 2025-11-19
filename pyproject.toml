@@ -8,7 +8,9 @@ dependencies = [
     "matplotlib==3.5.1",
     "mediapipe>=0.10.11",
     "opencv-python==4.6.0.66",
-    "protobuf>=3.9.2,<3.20",
+    "protobuf==4.25.5",
     "scikit-learn==1.0.2",
-    "tensorflow>=2.11.1",
+    "numpy==1.26.0",
+    "pyaudio==0.2.13",
+    "tensorflow==2.18.0",
 ]

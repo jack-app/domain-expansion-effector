@@ -111,6 +111,7 @@ def audio_recognition_thread():
 def main():
     # 引数解析 #################################################################
     args = get_args()
+    print("Hello World!")
 
     cap_device = args.device
     cap_width = args.width
