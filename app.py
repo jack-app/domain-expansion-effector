@@ -13,6 +13,7 @@ import mediapipe as mp
 
 from utils import CvFpsCalc
 from model import KeyPointClassifier
+from model import KeyPointClassifier_byAE
 from model import PointHistoryClassifier
 
 
@@ -68,7 +69,7 @@ def main():
     )
 
     keypoint_classifier = KeyPointClassifier()
-
+    keypoint_classifier_byAE = KeyPointClassifier_byAE()
     point_history_classifier = PointHistoryClassifier()
 
     # ラベル読み込み ###########################################################
@@ -141,11 +142,21 @@ def main():
                             pre_processed_point_history_list)
 
                 # ハンドサイン分類
-                hand_sign_id = keypoint_classifier(pre_processed_landmark_list)
-                if hand_sign_id == 2:  # 指差しサイン
-                    point_history.append(landmark_list[8])  # 人差指座標
-                else:
+                if mode == 3:
+                    isMuryoKusyo = keypoint_classifier_byAE(pre_processed_landmark_list)
+                    if isMuryoKusyo:
+                        hand_sign_id = 3
+                    else:
+                        hand_sign_id = 0
                     point_history.append([0, 0])
+                else:
+                    hand_sign_id = keypoint_classifier(pre_processed_landmark_list)
+                    if hand_sign_id == 2:  # 指差しサイン
+                        point_history.append(landmark_list[8])  # 人差指座標
+                    else:
+                        point_history.append([0, 0])
+
+                
 
                 # フィンガージェスチャー分類
                 finger_gesture_id = 0
@@ -160,15 +171,16 @@ def main():
                     finger_gesture_history).most_common()
 
                 # 描画
-                debug_image = draw_bounding_rect(use_brect, debug_image, brect)
                 debug_image = draw_landmarks(debug_image, landmark_list)
-                debug_image = draw_info_text(
-                    debug_image,
-                    brect,
-                    handedness,
-                    keypoint_classifier_labels[hand_sign_id],
-                    point_history_classifier_labels[most_common_fg_id[0][0]],
-                )
+                if not (mode == 3 and hand_sign_id==0): 
+                    debug_image = draw_bounding_rect(use_brect, debug_image, brect)
+                    debug_image = draw_info_text(
+                        debug_image,
+                        brect,
+                        handedness,
+                        keypoint_classifier_labels[hand_sign_id],
+                        point_history_classifier_labels[most_common_fg_id[0][0]],
+                    )
         else:
             point_history.append([0, 0])
 
@@ -192,6 +204,8 @@ def select_mode(key, mode):
         mode = 1
     if key == 104:  # h
         mode = 2
+    if key == 100:  # d
+        mode = 3
     return number, mode
 
 
@@ -292,6 +306,8 @@ def logging_csv(number, mode, landmark_list, point_history_list):
         with open(csv_path, 'a', newline="") as f:
             writer = csv.writer(f)
             writer.writerow([number, *point_history_list])
+    if mode == 3:
+        pass
     return
 
 
@@ -529,8 +545,8 @@ def draw_info(image, fps, mode, number):
     cv.putText(image, "FPS:" + str(fps), (10, 30), cv.FONT_HERSHEY_SIMPLEX,
                1.0, (255, 255, 255), 2, cv.LINE_AA)
 
-    mode_string = ['Logging Key Point', 'Logging Point History']
-    if 1 <= mode <= 2:
+    mode_string = ['Logging Key Point', 'Logging Point History','Domain Expansion']
+    if 1 <= mode <= 3:
         cv.putText(image, "MODE:" + mode_string[mode - 1], (10, 90),
                    cv.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1,
                    cv.LINE_AA)
